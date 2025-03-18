@@ -14,14 +14,14 @@ async fn main() {
     println!("🚀 Starting Web Crawler...");
     let start_time = Instant::now();
 
-    // ✅ 1. ระบุโดเมนหลักที่ต้องการ
+    // ✅ ระบุโดเมนหลักที่ต้องการ
     let domain = "https://www.heygoody.com";
 
-    // ✅ 2. ดึง Sitemap จาก robots.txt
-    let sitemap_urls = fetch_sitemaps_from_robots(domain).await;
+    // ✅ ค้นหา Sitemap ด้วยหลายวิธี
+    let sitemap_urls = discover_sitemaps(domain).await;
 
     if sitemap_urls.is_empty() {
-        println!("⚠️ No Sitemaps found in robots.txt");
+        println!("⚠️ No Sitemaps found for {}", domain);
         return;
     }
 
@@ -29,7 +29,7 @@ async fn main() {
     let mut spa_urls = Vec::new();
     let mut ssr_urls = Vec::new();
 
-    // ✅ 3. ดึง URLs ทั้งหมดจาก Sitemap
+    // ✅ ดึง URLs ทั้งหมดจาก Sitemap
     for sitemap in &sitemap_urls {
         if let Ok(content) = fetch_sitemap_raw(sitemap).await {
             if sitemap.contains("sitemap_index") {
@@ -54,7 +54,7 @@ async fn main() {
 
     println!("🌐 Found {} URLs to process.", all_urls.len());
 
-    // ✅ 4. แยก URLs เป็น SPA และ SSR
+    // ✅ แยก URLs เป็น SPA และ SSR
     for url in all_urls.iter() {
         if is_spa(url).await {
             spa_urls.push(url.clone());
@@ -63,7 +63,7 @@ async fn main() {
         }
     }
 
-    // ✅ 5. จัดเก็บข้อมูล Markdown เป็นกลุ่มใน `/all-markdown/{category}/`
+    // ✅ จัดเก็บข้อมูล Markdown เป็นกลุ่มใน `/all-markdown/{category}/`
     for url in all_urls.iter() {
         let category = categorize_url(url);
         let dir_path = format!("all-markdown/{}", category);
@@ -78,7 +78,7 @@ async fn main() {
         }
     }
 
-    // ✅ 6. สร้างไฟล์ `summary.txt`
+    // ✅ สร้างไฟล์ `summary.txt`
     let elapsed_time = start_time.elapsed();
     let summary_content = format!(
         "🌐 Total URLs: {}\nSPA URLs: {}\nSSR URLs: {}\n⏳ Total Crawl Time: {:.2?}",
@@ -93,11 +93,42 @@ async fn main() {
     println!("🎉 Web Crawling Completed!");
 }
 
-// ✅ ฟังก์ชันดึง Sitemap จาก robots.txt
+// ✅ ค้นหา Sitemap หลายวิธีเหมือน Googlebot
+async fn discover_sitemaps(domain: &str) -> Vec<String> {
+    let mut sitemaps = Vec::new();
+
+    // ✅ 1. ดึง Sitemap จาก robots.txt
+    let robots_sitemaps = fetch_sitemaps_from_robots(domain).await;
+    sitemaps.extend(robots_sitemaps);
+
+    // ✅ 2. ลองเดา URL ที่เป็นไปได้
+    let possible_sitemaps = vec![
+        format!("{}/sitemap.xml", domain),
+        format!("{}/sitemap_index.xml", domain),
+        format!("{}/sitemaps.xml", domain),
+    ];
+    for sitemap in &possible_sitemaps {
+        if let Ok(_) = reqwest::get(sitemap).await {
+            sitemaps.push(sitemap.clone());
+        }
+    }
+
+    // ✅ 3. ค้นหา Sitemap จาก `<head>` ของเว็บไซต์
+    if let Ok(head_sitemap) = fetch_sitemap_from_html_head(domain).await {
+        sitemaps.extend(head_sitemap);
+    }
+
+    // ✅ 4. ค้นหา Sitemap จากลิงก์ในหน้าแรก
+    if let Ok(link_sitemap) = fetch_sitemap_from_links(domain).await {
+        sitemaps.extend(link_sitemap);
+    }
+
+    sitemaps
+}
+
+// ✅ ดึง Sitemap จาก robots.txt
 async fn fetch_sitemaps_from_robots(domain: &str) -> Vec<String> {
     let robots_url = format!("{}/robots.txt", domain);
-    println!("🤖 Fetching robots.txt: {}", robots_url);
-
     let response = reqwest::get(&robots_url).await;
     match response {
         Ok(resp) => {
@@ -109,6 +140,40 @@ async fn fetch_sitemaps_from_robots(domain: &str) -> Vec<String> {
         }
         Err(_) => vec![],
     }
+}
+
+// ✅ ค้นหา Sitemap จาก `<head>` ของ HTML
+async fn fetch_sitemap_from_html_head(domain: &str) -> Result<Vec<String>, Error> {
+    let mut sitemaps = Vec::new();
+    let response = reqwest::get(domain).await?;
+    let text = response.text().await?;
+    let document = Html::parse_document(&text);
+    let selector = Selector::parse("link[rel='sitemap']").unwrap();
+
+    for element in document.select(&selector) {
+        if let Some(href) = element.value().attr("href") {
+            sitemaps.push(format!("{}/{}", domain, href));
+        }
+    }
+
+    Ok(sitemaps)
+}
+
+// ✅ ค้นหา Sitemap จากลิงก์ `<a href>` ในหน้าแรก
+async fn fetch_sitemap_from_links(domain: &str) -> Result<Vec<String>, Error> {
+    let mut sitemaps = Vec::new();
+    let response = reqwest::get(domain).await?;
+    let text = response.text().await?;
+    let document = Html::parse_document(&text);
+    let selector = Selector::parse("a[href*='sitemap']").unwrap();
+
+    for element in document.select(&selector) {
+        if let Some(href) = element.value().attr("href") {
+            sitemaps.push(format!("{}/{}", domain, href));
+        }
+    }
+
+    Ok(sitemaps)
 }
 
 // ✅ โหลด Sitemap ดิบ
