@@ -6,7 +6,7 @@ use reqwest::Error;
 use scraper::{Html, Selector};
 use spider::tokio;
 use spider::website::Website;
-use std::fs::{create_dir_all, write};
+use std::fs::{self, create_dir_all, write};
 use std::time::Instant;
 
 #[tokio::main]
@@ -14,19 +14,22 @@ async fn main() {
     println!("🚀 Starting Web Crawler...");
     let start_time = Instant::now();
 
-    let sitemap_urls = vec![
-        "https://www.heygoody.com/sitemap.xml",
-        "https://www.heygoody.com/th/sitemap.xml",
-        "https://www.heygoody.com/th/sitemap_index.xml",
-        "https://www.heygoody.com/th/post-sitemap.xml",
-        "https://www.heygoody.com/th/page-sitemap.xml",
-    ];
+    // ✅ 1. ระบุโดเมนหลักที่ต้องการ
+    let domain = "https://www.heygoody.com";
+
+    // ✅ 2. ดึง Sitemap จาก robots.txt
+    let sitemap_urls = fetch_sitemaps_from_robots(domain).await;
+
+    if sitemap_urls.is_empty() {
+        println!("⚠️ No Sitemaps found in robots.txt");
+        return;
+    }
 
     let mut all_urls = Vec::new();
     let mut spa_urls = Vec::new();
     let mut ssr_urls = Vec::new();
 
-    // ✅ 1. ดึง URLs ทั้งหมดจาก Sitemap
+    // ✅ 3. ดึง URLs ทั้งหมดจาก Sitemap
     for sitemap in &sitemap_urls {
         if let Ok(content) = fetch_sitemap_raw(sitemap).await {
             if sitemap.contains("sitemap_index") {
@@ -45,13 +48,13 @@ async fn main() {
     }
 
     if all_urls.is_empty() {
-        println!("⚠️ No URLs found. Check the sitemap availability.");
+        println!("⚠️ No URLs found from Sitemaps.");
         return;
     }
 
     println!("🌐 Found {} URLs to process.", all_urls.len());
 
-    // ✅ 2. แยก URLs เป็น SPA และ SSR
+    // ✅ 4. แยก URLs เป็น SPA และ SSR
     for url in all_urls.iter() {
         if is_spa(url).await {
             spa_urls.push(url.clone());
@@ -60,7 +63,7 @@ async fn main() {
         }
     }
 
-    // ✅ 3. จัดเก็บข้อมูล Markdown เป็นกลุ่มใน `/all-markdown/{category}/`
+    // ✅ 5. จัดเก็บข้อมูล Markdown เป็นกลุ่มใน `/all-markdown/{category}/`
     for url in all_urls.iter() {
         let category = categorize_url(url);
         let dir_path = format!("all-markdown/{}", category);
@@ -75,7 +78,7 @@ async fn main() {
         }
     }
 
-    // ✅ 4. สร้างไฟล์ `summary.txt`
+    // ✅ 6. สร้างไฟล์ `summary.txt`
     let elapsed_time = start_time.elapsed();
     let summary_content = format!(
         "🌐 Total URLs: {}\nSPA URLs: {}\nSSR URLs: {}\n⏳ Total Crawl Time: {:.2?}",
@@ -88,6 +91,24 @@ async fn main() {
     write("all-markdown/summary.txt", summary_content).expect("Failed to write summary file");
 
     println!("🎉 Web Crawling Completed!");
+}
+
+// ✅ ฟังก์ชันดึง Sitemap จาก robots.txt
+async fn fetch_sitemaps_from_robots(domain: &str) -> Vec<String> {
+    let robots_url = format!("{}/robots.txt", domain);
+    println!("🤖 Fetching robots.txt: {}", robots_url);
+
+    let response = reqwest::get(&robots_url).await;
+    match response {
+        Ok(resp) => {
+            let text = resp.text().await.unwrap_or_default();
+            text.lines()
+                .filter(|line| line.starts_with("Sitemap:"))
+                .map(|line| line.replace("Sitemap: ", "").trim().to_string())
+                .collect()
+        }
+        Err(_) => vec![],
+    }
 }
 
 // ✅ โหลด Sitemap ดิบ
