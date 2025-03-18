@@ -6,7 +6,7 @@ use reqwest::Error;
 use scraper::{Html, Selector};
 use spider::tokio;
 use spider::website::Website;
-use std::fs::{self, create_dir_all, write};
+use std::fs::{create_dir_all, write};
 use std::time::Instant;
 
 #[tokio::main]
