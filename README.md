@@ -55,8 +55,7 @@ cd web-crawler-rust
 5️⃣ สร้างไฟล์ summary.txt
 
 📂 โครงสร้างของไฟล์ผลลัพธ์
-pgsql
-คัดลอก
+```sh
 all-markdown/
 │── blogs/
 │   ├── blog1.md
@@ -68,6 +67,8 @@ all-markdown/
 │── others/
 │   ├── misc1.md
 │── summary.txt  <-- ✅ สรุปข้อมูลการดึงข้อมูลทั้งหมด
+```
+
 🎯 ผลลัพธ์ที่คาดหวัง
 ✅ Markdown ของแต่ละหน้าเว็บใน /all-markdown/
 ✅ จัดกลุ่ม Markdown ตามประเภทของ URL
