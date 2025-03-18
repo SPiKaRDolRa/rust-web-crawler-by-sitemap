@@ -6,11 +6,13 @@ use reqwest::Error;
 use scraper::{Html, Selector};
 use spider::tokio;
 use spider::website::Website;
-use std::fs::write;
+use std::fs::{create_dir_all, write};
+use std::time::Instant;
 
 #[tokio::main]
 async fn main() {
     println!("🚀 Starting Web Crawler...");
+    let start_time = Instant::now();
 
     let sitemap_urls = vec![
         "https://www.heygoody.com/sitemap.xml",
@@ -21,7 +23,10 @@ async fn main() {
     ];
 
     let mut all_urls = Vec::new();
+    let mut spa_urls = Vec::new();
+    let mut ssr_urls = Vec::new();
 
+    // ✅ 1. ดึง URLs ทั้งหมดจาก Sitemap
     for sitemap in &sitemap_urls {
         if let Ok(content) = fetch_sitemap_raw(sitemap).await {
             if sitemap.contains("sitemap_index") {
@@ -46,13 +51,41 @@ async fn main() {
 
     println!("🌐 Found {} URLs to process.", all_urls.len());
 
-    for url in all_urls {
-        if is_spa(&url).await {
-            fetch_with_chrome(&url).await;
+    // ✅ 2. แยก URLs เป็น SPA และ SSR
+    for url in all_urls.iter() {
+        if is_spa(url).await {
+            spa_urls.push(url.clone());
         } else {
-            fetch_with_http(&url).await;
+            ssr_urls.push(url.clone());
         }
     }
+
+    // ✅ 3. จัดเก็บข้อมูล Markdown เป็นกลุ่มใน `/all-markdown/{category}/`
+    for url in all_urls.iter() {
+        let category = categorize_url(url);
+        let dir_path = format!("all-markdown/{}", category);
+        create_dir_all(&dir_path).expect("Failed to create directory");
+
+        let filename = format!("{}/{}.md", dir_path, sanitize_filename(url));
+
+        if spa_urls.contains(url) {
+            fetch_with_chrome(url, &filename).await;
+        } else {
+            fetch_with_http(url, &filename).await;
+        }
+    }
+
+    // ✅ 4. สร้างไฟล์ `summary.txt`
+    let elapsed_time = start_time.elapsed();
+    let summary_content = format!(
+        "🌐 Total URLs: {}\nSPA URLs: {}\nSSR URLs: {}\n⏳ Total Crawl Time: {:.2?}",
+        all_urls.len(),
+        spa_urls.len(),
+        ssr_urls.len(),
+        elapsed_time
+    );
+
+    write("all-markdown/summary.txt", summary_content).expect("Failed to write summary file");
 
     println!("🎉 Web Crawling Completed!");
 }
@@ -96,18 +129,17 @@ async fn is_spa(url: &str) -> bool {
 }
 
 // ✅ Fetch ข้อมูลจาก SSR (HTTP Request)
-async fn fetch_with_http(url: &str) {
+async fn fetch_with_http(url: &str, filename: &str) {
     let response = reqwest::get(url).await;
     if let Ok(resp) = response {
         let html = resp.text().await.unwrap_or_default();
         let markdown = html_to_markdown(&html);
-        let filename = format!("output_{}.md", sanitize_filename(url));
-        write(&filename, markdown).expect("Failed to write file");
+        write(filename, markdown).expect("Failed to write file");
     }
 }
 
 // ✅ Fetch ข้อมูลจาก SPA (Chrome Headless)
-async fn fetch_with_chrome(url: &str) {
+async fn fetch_with_chrome(url: &str, filename: &str) {
     let mut website: Website = Website::new(url).with_caching(true).build().unwrap();
     website.crawl().await;
 
@@ -115,8 +147,7 @@ async fn fetch_with_chrome(url: &str) {
         if let Some(page) = pages.iter().find(|p| p.get_url() == url) {
             let html = page.get_html();
             let markdown = html_to_markdown(&html);
-            let filename = format!("output_{}.md", sanitize_filename(url));
-            write(&filename, markdown).expect("Failed to write file");
+            write(filename, markdown).expect("Failed to write file");
         }
     }
 }
@@ -138,4 +169,17 @@ fn sanitize_filename(url: &str) -> String {
         .replace("http://", "")
         .replace("/", "_")
         .replace(":", "_")
+}
+
+// ✅ จัดกลุ่ม URL เป็น Directory (ตามประเภทของ URL)
+fn categorize_url(url: &str) -> String {
+    if url.contains("/blog") {
+        "blogs".to_string()
+    } else if url.contains("/product") {
+        "products".to_string()
+    } else if url.contains("/news") {
+        "news".to_string()
+    } else {
+        "others".to_string()
+    }
 }
